@@ -1,5 +1,5 @@
 import type { ComponentInstance, ComponentTypeId, ProjectData, Wire } from '../types';
-import { defOf } from '../data/componentDefs';
+import { componentDefs, defOf } from '../data/componentDefs';
 import { snaps, type BbRow, BB_ROWS } from './boards';
 
 export interface Occupant {
@@ -178,9 +178,17 @@ export class Circuit {
     this.occupancy.clear();
     let maxNum = 0;
     for (const c of data.components ?? []) {
-      let ok = true;
-      for (const snapId of Object.values(c.pins)) {
-        if (!snaps.has(snapId) || this.occupancy.has(snapId)) {
+      if (!c || typeof c.id !== 'string' || !componentDefs.has(c.type)) {
+        problems.push(`Skipped component ${c?.id ?? '?'}: unknown type "${c?.type}".`);
+        continue;
+      }
+      if (this.components.has(c.id)) {
+        problems.push(`Skipped component ${c.id}: duplicate id.`);
+        continue;
+      }
+      let ok = c.pins !== null && typeof c.pins === 'object';
+      for (const snapId of Object.values(c.pins ?? {})) {
+        if (typeof snapId !== 'string' || !snaps.has(snapId) || this.occupancy.has(snapId)) {
           ok = false;
           break;
         }
@@ -198,6 +206,10 @@ export class Circuit {
       maxNum = Math.max(maxNum, num(c.id));
     }
     for (const w of data.wires ?? []) {
+      if (!w || typeof w.id !== 'string' || typeof w.a !== 'string' || typeof w.b !== 'string' || this.wires.has(w.id)) {
+        problems.push(`Skipped wire ${w?.id ?? '?'}: malformed or duplicate.`);
+        continue;
+      }
       if (!snaps.has(w.a) || !snaps.has(w.b) || this.occupancy.has(w.a) || this.occupancy.has(w.b)) {
         problems.push(`Skipped wire ${w.id}: invalid or occupied endpoints.`);
         continue;

@@ -8,6 +8,7 @@ export interface WireVisual {
 }
 
 const TIP_MAT = new THREE.MeshStandardMaterial({ color: '#c8ccd2', metalness: 0.85, roughness: 0.3 });
+TIP_MAT.userData.shared = true;
 
 function hash(s: string): number {
   let h = 0;

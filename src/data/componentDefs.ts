@@ -50,10 +50,10 @@ const defs: ComponentDef[] = [
     short: 'BTN',
     placement: 'footprint',
     pinsDoc: [
-      { name: 'a1', desc: 'Contact A, left. Internally joined to A right (a2).' },
-      { name: 'a2', desc: 'Contact A, right. Internally joined to A left (a1).' },
-      { name: 'b1', desc: 'Contact B, left. Internally joined to B right (b2).' },
-      { name: 'b2', desc: 'Contact B, right. Internally joined to B left (b2).' },
+      { name: 'a1', desc: 'Left contact, top. Internally joined to the pin straight across the gap (b1) — like a real tact switch.' },
+      { name: 'a2', desc: 'Right contact, top. Internally joined to b2 below it.' },
+      { name: 'b1', desc: 'Left contact, bottom. Internally joined to a1 above it.' },
+      { name: 'b2', desc: 'Right contact, bottom. Internally joined to a2 above it.' },
     ],
     footprint: [
       { name: 'a1', dCol: 0, row: 'e' },
@@ -62,7 +62,7 @@ const defs: ComponentDef[] = [
       { name: 'b2', dCol: 2, row: 'f' },
     ],
     defaultProps: { pressed: false },
-    paletteHint: 'Straddles the centre gap. Pins on the SAME side are joined; pressing connects the two sides. Click-and-hold to press.',
+    paletteHint: 'Straddles the centre gap. Pins in the SAME column are joined internally (real tact-switch layout); pressing connects the left column to the right column. Click-and-hold to press.',
   },
   {
     type: 'switch',

@@ -19,7 +19,12 @@ npm run dev       # development server (http://localhost:5173)
 npm run build     # type-check + production build into dist/
 npm run preview   # serve the production build
 npm run verify    # build first! headless browser checks + screenshots
+node scripts/pointer-test.mjs   # extra mouse-interaction smoke test
 ```
+
+The verification scripts use Playwright. They pick up a pre-provisioned
+Chromium at `/opt/pw-browsers/chromium` if one exists; on a fresh machine run
+`npx playwright install chromium` once first.
 
 ## Features
 
@@ -72,9 +77,10 @@ net key; wires, pressed buttons and switch positions merge keys into **nets**
 drivers"). Every other net takes the conductance-weighted average of its
 neighbours through elements (relaxation): resistors are ideal, an LED is a
 2 V drop + 30 Ω when forward-biased (brightness ∝ current, clamped ≈12 mA),
-a potentiometer is two resistors, a capacitor is a stored voltage behind a
-small series resistance integrated each step with an exact-exponential
-update (stable for any R·C). Time advances in 1 ms steps; block programs run
+a potentiometer is two resistors, and a capacitor uses the standard
+backward-Euler companion model (a C/Δt conductance behind its stored
+voltage — unconditionally stable for any R·C, correct for parallel caps).
+Time advances in 1 ms steps; block programs run
 as cooperative threads inside those steps; 74HC595 clocks are edge-triggered
 per step; the 555 is a behavioural model (⅓/⅔ VCC comparators + latch +
 discharge switch).
@@ -120,30 +126,49 @@ src/
     panels.ts                 lab guide / explanation / model / issues / tools / serial
     interaction.ts            pointer state machine (place, wire, drag, probe)
     blocklyBlocks.ts          custom blocks, toolbox, theme, injection
-scripts/verify.mjs            headless verification harness
+scripts/verify.mjs            headless verification harness (npm run verify)
+scripts/pointer-test.mjs      real mouse-event interaction smoke test
+scripts/sim-regress.mjs       solver regression checks (RC curves, IC chains)
 verification/                 screenshots captured by npm run verify
 ASSETS.md                     asset inventory & licenses
 ```
 
 ## Verification performed
 
-`npm run verify` (Playwright + system Chromium against the production build)
-ran clean — **10/10 checks**:
+`npm run verify` (Playwright + headless Chromium against the production
+build) ran clean — **10/10 checks**:
 
 1. Lab 1 auto-loads on first visit; the LED lights from the rails with **no
    program** (brightness ≈ 0.69 of max ⇒ ~9 mA through 330 Ω — correct).
 2. WebGL canvas renders non-blank content.
-3. **Blink sample** toggles D13 with the expected 500 ms period
-   (sampled `110011001100`).
+3. **Blink sample** drives D13 and the sampled states alternate at the
+   expected ~500 ms cadence (observed `110011001100` at 280 ms sampling).
 4. **Lab 2**: pressing the button turns the LED on via the block program and
    releasing turns it off (0.00 → 0.69 → 0.00).
 5. **Lab 3**: the 555 astable blinks the LED with no program running.
-6. **Lab 4**: the 74HC595 lights the correct 7-segment pattern.
+6. **Lab 4**: the 74HC595 lights a multi-segment digit pattern on the
+   7-segment display (segment-count assertion, not glyph-exactness).
 7. Serial monitor receives the counter's prints (`0,1,2,3…`).
 8. Blockly editor renders and is usable.
 9. An LED jammed straight across 5 V/GND produces `led-no-resistor` +
    `led-overcurrent` issues.
 10. No page/console errors.
+
+`node scripts/pointer-test.mjs` additionally drives the app with real mouse
+events — 6/6: click-click wiring, two-click LED placement, one-click button
+footprint placement, click-select + `Delete`, `Esc` cancelling a wire in
+progress, and hover identity in the status bar.
+
+`node scripts/sim-regress.mjs` checks solver physics — 5/5: two parallel
+capacitors follow the real RC curve (τ = R·C_total, never exceeding the
+supply), a capacitor whose strips get bridged by a wire stays finite, and a
+six-inverter 74HC04 chain settles to the correct logic levels (IC outputs
+feeding IC inputs).
+
+The app was also reviewed by a multi-agent adversarial pass (simulation,
+circuit data, program system, UI, docs); confirmed findings — including a
+capacitor-integration flaw, IC-to-IC clocking, real tact-switch pin
+orientation, and GPU resource leaks — were fixed and re-verified.
 
 Screenshots saved under `verification/`:
 `01-workbench.png` (initial view), `02-lab4-running.png` (guided lab running,

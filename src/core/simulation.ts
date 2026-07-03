@@ -18,7 +18,6 @@ import type { Circuit } from './circuit';
 
 export const LED_VF = 2.0;
 export const LED_RON = 30;
-export const CAP_R = 2;
 const RELAX_ITERS = 40;
 const HIGH_THRESHOLD = 2.5;
 
@@ -83,6 +82,8 @@ export class Simulation {
   probeLabel = '';
 
   private tickCount = 0;
+  /** IC output drivers from the previous settle — persists so sequential ICs see each other's edges */
+  private icDrivers: Array<{ net: number; v: number; tag: string }> = [];
 
   constructor(private circuit: Circuit) {
     circuit.on('topology', () => this.rebuild());
@@ -123,10 +124,11 @@ export class Simulation {
 
     for (const c of this.circuit.components.values()) {
       if (c.type === 'button') {
-        // same-side pins always joined
-        union(keyOf(c.pins.a1), keyOf(c.pins.a2));
-        union(keyOf(c.pins.b1), keyOf(c.pins.b2));
-        if (c.props.pressed) union(keyOf(c.pins.a1), keyOf(c.pins.b1));
+        // real tact switches join the pins across the gap in the SAME column;
+        // pressing connects the left column pair to the right column pair
+        union(keyOf(c.pins.a1), keyOf(c.pins.b1));
+        union(keyOf(c.pins.a2), keyOf(c.pins.b2));
+        if (c.props.pressed) union(keyOf(c.pins.a1), keyOf(c.pins.a2));
       } else if (c.type === 'switch') {
         const to = c.props.position === 1 ? c.pins.t2 : c.pins.t1;
         union(keyOf(c.pins.com), keyOf(to));
@@ -164,9 +166,12 @@ export class Simulation {
           if (!this.capV.has(c.id)) this.capV.set(c.id, 0);
           break;
         case 'pot': {
-          // two resistors, values updated live each tick from props
-          this.elements.push({ kind: 'res', a: netOf(c.pins.end1), b: netOf(c.pins.wiper), ohms: 1, compId: c.id + ':1' });
-          this.elements.push({ kind: 'res', a: netOf(c.pins.wiper), b: netOf(c.pins.end2), ohms: 1, compId: c.id + ':2' });
+          // two resistors; real values immediately (validation may run before
+          // the next tick refreshes them), refreshed live each tick from props
+          const t = Math.max(0.001, Math.min(0.999, Number(c.props.t)));
+          const potOhms = Math.max(10, Number(c.props.ohms) || 10000);
+          this.elements.push({ kind: 'res', a: netOf(c.pins.end1), b: netOf(c.pins.wiper), ohms: t * potOhms, compId: c.id + ':1' });
+          this.elements.push({ kind: 'res', a: netOf(c.pins.wiper), b: netOf(c.pins.end2), ohms: (1 - t) * potOhms, compId: c.id + ':2' });
           break;
         }
         case 'sevenseg': {
@@ -193,9 +198,14 @@ export class Simulation {
 
     this.incident = this.nets.map(() => []);
     this.elements.forEach((e, i) => {
+      // an element whose two legs landed in one net (e.g. a cap bridged by a
+      // wire) carries no defined branch — keep it out of the solver entirely
+      if (e.a === e.b) return;
       this.incident[e.a].push(i);
       this.incident[e.b].push(i);
     });
+    // net indices changed — previous IC output drivers are stale
+    this.icDrivers = [];
     // relaxation only needs to visit nets that elements touch; everything
     // else is either strongly driven or floating
     this.activeNets = [];
@@ -272,7 +282,8 @@ export class Simulation {
 
   pinToggle(pin: number) {
     const st = this.pinStates.get(pin);
-    const cur = st && st.mode === 'output' && !st.pwm ? st.value : 0;
+    // treat a PWM duty > 127 as HIGH, matching pinRead
+    const cur = st && st.mode === 'output' ? (st.pwm ? (st.value > 127 ? 1 : 0) : st.value) : 0;
     this.pinWrite(pin, cur ? 0 : 1);
   }
 
@@ -308,9 +319,12 @@ export class Simulation {
 
   // ------------------------------------------------------------------ tick
 
+  private dtSec = 0.001;
+
   tick(dtMs: number) {
     this.tickCount++;
     this.time += dtMs;
+    this.dtSec = Math.max(1e-6, dtMs / 1000);
     this.runtimeIssues = [];
 
     // strong drivers that never change
@@ -342,21 +356,22 @@ export class Simulation {
     }
 
     // iterate: solve nets, evaluate ICs (their outputs are strong drivers),
-    // re-solve while outputs change (bounded).
-    const icDrivers: Array<{ net: number; v: number; tag: string }> = [];
+    // re-solve while outputs change (bounded). IC drivers persist across
+    // ticks so ICs can clock/trigger each other (555→595, gate feedback,
+    // daisy-chained registers) and latches hold state: pass 0 solves with
+    // last tick's outputs, and the edge detection samples that solution.
     let sequentialDone = false;
-    for (let pass = 0; pass < 4; pass++) {
-      this.solveNets([...strong, ...icDrivers]);
+    for (let pass = 0; pass < 6; pass++) {
+      this.solveNets([...strong, ...this.icDrivers]);
       const next = this.evalIcs(!sequentialDone, dtMs);
       sequentialDone = true;
-      if (driversEqual(icDrivers, next)) break;
-      icDrivers.length = 0;
-      icDrivers.push(...next);
+      const settled = driversEqual(this.icDrivers, next);
+      this.icDrivers = next;
+      if (settled) break;
     }
-    const allDrivers = [...strong, ...icDrivers];
-    this.solveNets(allDrivers);
+    this.solveNets([...strong, ...this.icDrivers]);
 
-    this.integrateCaps(dtMs, allDrivers);
+    this.integrateCaps(dtMs);
     this.computeLedLevels();
     this.checkRuntimeIssues(strong);
   }
@@ -421,9 +436,11 @@ export class Simulation {
             sumG += g;
             sumGV += g * veff;
           } else {
-            // capacitor: series (CAP_R) resistance + stored voltage
+            // capacitor: backward-Euler companion model — a conductance of
+            // C/Δt behind the stored voltage. Unconditionally stable and
+            // exact for coupled caps (they share charge through the solve).
             const vc = this.capV.get(e.compId) ?? 0;
-            const g = 1 / CAP_R;
+            const g = e.farads / this.dtSec;
             const veff = e.a === i ? vo + vc : vo - vc;
             sumG += g;
             sumGV += g * veff;
@@ -483,13 +500,18 @@ export class Simulation {
           const mrLow = Number.isFinite(mrV) && mrV < 1.0;
           const sh = hi(c, 'SHCP');
           const stc = hi(c, 'STCP');
+          const preShift = [...st.bits];
+          let shifted = false;
           if (mrLow) {
             st.bits = [0, 0, 0, 0, 0, 0, 0, 0];
           } else if (sh && !st.prevSh) {
             const d = hi(c, 'DS') ? 1 : 0;
             st.bits = [d, ...st.bits.slice(0, 7)];
+            shifted = true;
           }
-          if (stc && !st.prevSt) st.latch = [...st.bits];
+          // with SHCP and STCP tied together the latch captures the
+          // PRE-shift value (real 595s lag one clock in that hookup)
+          if (stc && !st.prevSt) st.latch = shifted ? preShift : [...st.bits];
           st.prevSh = sh;
           st.prevSt = stc;
         }
@@ -521,47 +543,31 @@ export class Simulation {
   }
 
   /**
-   * Exact exponential capacitor update. The relaxed network is linear from a
-   * capacitor's point of view: i(vc) = k·(Voc − vc). One extra solve with the
-   * stored voltage perturbed by 1 V measures k and Voc, then
-   * vc ← Voc + (vc − Voc)·e^(−dt·k/C) — unconditionally stable for any R·C,
-   * including a capacitor jammed straight across the rails.
+   * Backward-Euler capacitor update. The solve already modelled each cap as
+   * a C/Δt conductance behind its stored voltage, so the converged node
+   * voltages ARE the end-of-step plate voltages: vc ← va − vb. This is the
+   * standard companion-model integration — unconditionally stable for any
+   * R·C (including a cap jammed straight across the rails) and correct for
+   * multiple interacting capacitors.
    */
-  private integrateCaps(dtMs: number, drivers: Array<{ net: number; v: number; tag: string }>) {
+  private integrateCaps(dtMs: number) {
     const dt = dtMs / 1000;
-    const caps = this.elements.filter((e) => e.kind === 'cap');
-    if (caps.length === 0) return;
-    let dirty = false;
-    for (const e of caps) {
+    for (const e of this.elements) {
       if (e.kind !== 'cap') continue;
-      const va = this.nets[e.a].volts;
-      const vb = this.nets[e.b].volts;
-      let vc = this.capV.get(e.compId) ?? 0;
-      if (!Number.isFinite(va) || !Number.isFinite(vb)) {
-        vc *= 1 - Math.min(1, dt / 30); // slow self-discharge while floating
-        this.capV.set(e.compId, vc);
+      const vc = this.capV.get(e.compId) ?? 0;
+      if (e.a === e.b) {
+        // both legs in one net — shorted cap simply discharges
+        this.capV.set(e.compId, vc * (1 - Math.min(1, dt / 0.05)));
         continue;
       }
-      const i1 = (va - vb - vc) / CAP_R;
-      // probe the Thevenin equivalent seen by this capacitor
-      this.capV.set(e.compId, vc + 1);
-      this.solveNets(drivers);
-      dirty = true;
-      const va2 = this.nets[e.a].volts;
-      const vb2 = this.nets[e.b].volts;
-      const i2 = Number.isFinite(va2) && Number.isFinite(vb2) ? (va2 - vb2 - (vc + 1)) / CAP_R : i1;
-      const k = i1 - i2;
-      let next: number;
-      if (k > 1e-12) {
-        const voc = vc + i1 / k;
-        next = voc + (vc - voc) * Math.exp((-dt * k) / e.farads);
-      } else {
-        next = vc + (i1 * dt) / e.farads;
+      const va = this.nets[e.a].volts;
+      const vb = this.nets[e.b].volts;
+      if (!Number.isFinite(va) || !Number.isFinite(vb)) {
+        this.capV.set(e.compId, vc * (1 - Math.min(1, dt / 30))); // slow self-discharge while floating
+        continue;
       }
-      this.capV.set(e.compId, Math.max(-12, Math.min(12, next)));
+      this.capV.set(e.compId, Math.max(-12, Math.min(12, va - vb)));
     }
-    // restore consistent node voltages after the probing solves
-    if (dirty) this.solveNets(drivers);
   }
 
   capVoltage(compId: string): number {

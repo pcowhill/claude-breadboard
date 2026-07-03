@@ -1,5 +1,6 @@
 // Real pointer-interaction smoke test: palette clicks + canvas clicks.
 import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 const PORT = 4174;
@@ -7,7 +8,7 @@ const BASE = `http://localhost:${PORT}`;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
-  cwd: '/home/user/claude-breadboard',
+  cwd: new URL('..', import.meta.url).pathname,
   stdio: 'ignore',
 });
 
@@ -26,7 +27,13 @@ try {
     } catch {}
     await wait(400);
   }
-  browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--enable-unsafe-swiftshader', '--disable-gpu'] });
+  // use the pre-provisioned browser when present, else Playwright's own
+  let executablePath;
+  try {
+    const st = statSync('/opt/pw-browsers/chromium');
+    if (st.isFile()) executablePath = '/opt/pw-browsers/chromium';
+  } catch {}
+  browser = await chromium.launch({ executablePath, args: ['--enable-unsafe-swiftshader', '--disable-gpu'] });
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
   await page.goto(BASE);
   await page.waitForFunction(() => window.__lab !== undefined, { timeout: 20000 });

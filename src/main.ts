@@ -87,7 +87,10 @@ class App {
       meterSet: (a, b) => {
         this.meterA = a;
         this.meterB = b;
-        this.setTab('tools');
+        // resetMeter() fires this with nulls (e.g. on New/Import) — don't
+        // hijack whatever panel the user is reading in that case
+        if (a || b) this.setTab('tools');
+        else if (this.activeTab === 'tools') this.renderPanel();
       },
       flash: (msg) => this.flash(msg),
     });
@@ -149,6 +152,14 @@ class App {
       if (this.tickAcc > 250) this.tickAcc = 0; // drop backlog after long stalls
     } else {
       this.sim.tick(dtReal * this.speed);
+    }
+
+    // a finite program that ran to completion should say so
+    if (this.sim.programRunning && this.interpreter.finished) {
+      this.sim.programRunning = false;
+      this.ui.drawerStatus.textContent = '✔ Program finished (all scripts ran to the end).';
+      this.ui.btnRun.textContent = '▶ Run';
+      this.ui.btnStop.disabled = true;
     }
 
     this.view.update(this.sim, dtReal / 1000);
@@ -254,6 +265,8 @@ class App {
 
   // -------------------------------------------------------------- validation
 
+  private issuesSignature = '';
+
   runValidation() {
     const staticIssues = validate(this.circuit, this.sim, this.programPins);
     const merged = [...this.sim.runtimeIssues, ...staticIssues];
@@ -265,6 +278,9 @@ class App {
       seen.add(k);
       return true;
     });
+    const sig = this.issues.map(key).join('~');
+    if (sig === this.issuesSignature) return; // nothing changed — no re-render churn
+    this.issuesSignature = sig;
     this.updateBadges();
     if (this.activeTab === 'issues') this.renderPanel();
   }
@@ -284,13 +300,18 @@ class App {
 
   private pushSerial(text: string) {
     this.serial.push({ t: this.sim.time, text });
-    if (this.serial.length > 500) this.serial.splice(0, this.serial.length - 500);
+    if (this.serial.length > 500) {
+      this.serial.splice(0, this.serial.length - 500);
+      this.serialTrimmed = true;
+    }
     if (this.activeTab !== 'serial') this.serialUnread++;
     else this.serialDirty = true;
     this.updateBadges();
   }
 
   private serialDirty = false;
+  private serialTrimmed = false;
+  private serialRendered = 0;
 
   // ---------------------------------------------------------------- panels
 
@@ -369,8 +390,11 @@ class App {
       case 'serial':
         body.appendChild(renderSerialPanel(this.serial, () => {
           this.serial = [];
+          this.serialRendered = 0;
           this.renderPanel();
         }));
+        this.serialRendered = this.serial.length;
+        this.serialTrimmed = false;
         break;
     }
   }
@@ -402,7 +426,26 @@ class App {
     }
     if (this.activeTab === 'serial' && this.serialDirty) {
       this.serialDirty = false;
-      this.renderPanel();
+      const log = document.getElementById('serial-log');
+      if (!log || this.serialTrimmed || this.serialRendered === 0 || this.serial.length < this.serialRendered) {
+        this.renderPanel(); // full render (first lines / after trim / cleared)
+      } else {
+        // append only the new lines and keep the user's scroll position
+        // unless they were already following the tail
+        const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+        for (let i = this.serialRendered; i < this.serial.length; i++) {
+          const l = this.serial[i];
+          const div = document.createElement('div');
+          const ts = document.createElement('span');
+          ts.className = 't';
+          ts.textContent = `[${(l.t / 1000).toFixed(2)}s]`;
+          div.appendChild(ts);
+          div.appendChild(document.createTextNode(' ' + l.text));
+          log.appendChild(div);
+        }
+        this.serialRendered = this.serial.length;
+        if (atBottom) log.scrollTop = log.scrollHeight;
+      }
     }
   }
 

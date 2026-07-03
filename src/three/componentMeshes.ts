@@ -15,6 +15,11 @@ export interface CompVisual {
 const LEAD_MAT = new THREE.MeshStandardMaterial({ color: '#b9bec4', metalness: 0.9, roughness: 0.35 });
 const DARK_PLASTIC = new THREE.MeshStandardMaterial({ color: '#1a1b20', roughness: 0.8 });
 const IC_PLASTIC = new THREE.MeshStandardMaterial({ color: '#17181c', roughness: 0.65 });
+// module-level materials are reused by every instance — the view's dispose
+// pass must never destroy them
+LEAD_MAT.userData.shared = true;
+DARK_PLASTIC.userData.shared = true;
+IC_PLASTIC.userData.shared = true;
 
 const LED_COLORS: Record<string, { body: string; emissive: string }> = {
   red: { body: '#ff5548', emissive: '#ff2a1a' },
@@ -37,6 +42,7 @@ function getGlowTexture(): THREE.Texture {
   g.fillStyle = grad;
   g.fillRect(0, 0, 128, 128);
   glowTexture = new THREE.CanvasTexture(c);
+  glowTexture.userData.shared = true;
   return glowTexture;
 }
 

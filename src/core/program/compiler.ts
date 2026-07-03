@@ -15,14 +15,20 @@ export function compileWorkspace(ws: Blockly.Workspace): CompileResult {
 
   const tops = ws.getTopBlocks(true);
   let loose = 0;
+  let disabled = 0;
   for (const top of tops) {
     if (top.type === 'event_start') {
+      if (!top.isEnabled()) {
+        disabled++;
+        continue;
+      }
       const body = stmtChain(top.getNextBlock(), warnings);
       program.scripts.push({ body });
     } else if (!top.isInsertionMarker() && top.isEnabled()) {
       loose++;
     }
   }
+  if (disabled > 0) warnings.push(`${disabled} disabled script(s) were skipped.`);
   if (loose > 0) {
     warnings.push(`${loose} block stack(s) are not attached to a "when simulation starts" hat and will not run.`);
   }

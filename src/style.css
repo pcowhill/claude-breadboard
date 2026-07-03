@@ -487,10 +487,10 @@ kbd {
   #sidepanel.open {
     transform: translateX(0);
   }
-  #panel-toggle {
+  #btn-panel-toggle {
     display: inline-block !important;
   }
 }
-#panel-toggle {
+#btn-panel-toggle {
   display: none;
 }

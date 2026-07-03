@@ -30,6 +30,7 @@ export class View {
   private meterMarkerA: THREE.Group;
   private meterMarkerB: THREE.Group;
   private highlightMarkers = new THREE.Group();
+  private highlightCache = new Map<string, THREE.Mesh>();
   private clock = 0;
 
   constructor(canvas: HTMLCanvasElement, private circuit: Circuit) {
@@ -50,13 +51,29 @@ export class View {
     this.overlayRoot.add(this.probeMarker, this.meterMarkerA, this.meterMarkerB);
 
     circuit.on('topology', () => this.syncCircuit());
+    // visual prop edits (LED colour, resistor bands) also need a mesh refresh;
+    // the signature check keeps this cheap for non-visual prop changes
+    circuit.on('props', () => this.syncCircuit());
     this.syncCircuit();
   }
 
   // ------------------------------------------------------------- circuit sync
 
+  private circuitSignature = '';
+
   syncCircuit() {
-    // full rebuild — topology changes are rare and component counts small
+    // skip rebuilds when nothing visual changed (e.g. button presses emit
+    // topology events for the nets but the meshes are updated dynamically)
+    const sig = [
+      ...[...this.circuit.components.values()].map(
+        (c) => `${c.id}:${c.type}:${Object.values(c.pins).join(',')}:${c.props.color ?? ''}:${c.props.ohms ?? ''}`,
+      ),
+      ...[...this.circuit.wires.values()].map((w) => `${w.id}:${w.a}:${w.b}:${w.color}`),
+    ].join('|');
+    if (sig === this.circuitSignature) return;
+    this.circuitSignature = sig;
+
+    // full rebuild — real topology changes are rare and component counts small
     for (const v of this.compVisuals.values()) this.compRoot.remove(v.group);
     for (const v of this.wireVisuals.values()) this.wireRoot.remove(v.group);
     disposeGroup(this.compRoot);
@@ -89,17 +106,29 @@ export class View {
     // Arduino on-board LEDs
     const d13 = sim.readingOfKey('ard.D13');
     this.arduino.ledL.emissiveIntensity = Number.isFinite(d13.volts) && d13.volts > 2.5 ? 2.2 : 0;
-    // pulsing debug highlights
-    this.highlightMarkers.clear();
+    // pulsing debug highlights (meshes cached per pin, pulsed via scale)
+    const wanted = new Set<string>();
     for (const key of sim.highlightedPins) {
       const m = /^ard\.D(\d+)$/.exec(key);
       if (!m) continue;
       const snapId = `ard.d${m[1]}`;
       if (!snaps.has(snapId)) continue;
-      const p = snaps.get(snapId).pos;
-      const r = ring('#ff8787', 2 + Math.sin(this.clock * 6) * 0.5, 0.3);
-      r.position.set(p.x, p.y + 0.4, p.z);
-      this.highlightMarkers.add(r);
+      wanted.add(snapId);
+      let r = this.highlightCache.get(snapId);
+      if (!r) {
+        r = ring('#ff8787', 1);
+        const p = snaps.get(snapId).pos;
+        r.position.set(p.x, p.y + 0.4, p.z);
+        this.highlightCache.set(snapId, r);
+        this.highlightMarkers.add(r);
+      }
+      r.scale.setScalar(2 + Math.sin(this.clock * 6) * 0.5);
+    }
+    for (const [snapId, mesh] of this.highlightCache) {
+      if (!wanted.has(snapId)) {
+        this.highlightMarkers.remove(mesh);
+        this.highlightCache.delete(snapId);
+      }
     }
     this.ctx.controls.update();
     this.ctx.renderer.render(this.ctx.scene, this.ctx.camera);
@@ -250,8 +279,21 @@ export class View {
   }
 }
 
-function ring(color: string, radius: number, tube: number): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 8, 28), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false }));
+// rings are created constantly (hover, ghosts, selection, pulses) — share one
+// unit geometry and per-colour materials so they never leak GPU resources
+const RING_GEO = new THREE.TorusGeometry(1, 0.2, 8, 28);
+RING_GEO.userData.shared = true;
+const ringMats = new Map<string, THREE.MeshBasicMaterial>();
+
+function ring(color: string, radius: number, _tube = 0.3): THREE.Mesh {
+  let mat = ringMats.get(color);
+  if (!mat) {
+    mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false });
+    mat.userData.shared = true;
+    ringMats.set(color, mat);
+  }
+  const m = new THREE.Mesh(RING_GEO, mat);
+  m.scale.setScalar(radius);
   m.rotation.x = -Math.PI / 2;
   return m;
 }
@@ -274,8 +316,17 @@ function flag(color: string): THREE.Group {
 function disposeGroup(root: THREE.Group) {
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
-    if (mesh.isMesh) {
-      mesh.geometry?.dispose();
+    const isSprite = (o as THREE.Sprite).isSprite;
+    if (mesh.isMesh || isSprite) {
+      // sprites share one internal geometry across all instances — never dispose it
+      if (!isSprite && mesh.geometry && !mesh.geometry.userData?.shared) mesh.geometry.dispose();
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of mats) {
+        if (!m || m.userData?.shared) continue;
+        const map = (m as THREE.MeshStandardMaterial).map;
+        if (map && !map.userData?.shared) map.dispose();
+        m.dispose();
+      }
     }
   });
   root.clear();

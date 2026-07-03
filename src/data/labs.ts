@@ -71,7 +71,7 @@ function lab2Starter(): ProjectData {
     .comp('button', { a1: 'bb.e5', a2: 'bb.e7', b1: 'bb.f5', b2: 'bb.f7' })
     .wire('ard.d2', 'bb.a5', YELLOW)
     .comp('resistor', { p1: 'bb.b5', p2: 'bb.nt3' }, { ohms: 10000 })
-    .wire('bb.g5', 'bb.pt3', RED)
+    .wire('bb.g7', 'bb.pt3', RED)
     .wire('ard.d13', 'bb.a15', BLUE)
     .comp('resistor', { p1: 'bb.b15', p2: 'bb.b17' }, { ohms: 330 })
     .comp('led', { anode: 'bb.c17', cathode: 'bb.c19' }, { color: 'green' })
@@ -167,7 +167,7 @@ export const LABS: Lab[] = [
     goal: 'Open workbench — build anything you like.',
     components: ['Everything in the palette.'],
     wiring: [
-      'Drag parts from the palette onto the breadboard.',
+      'Click a part in the palette, then click breadboard holes to place it.',
       'Use the wire tool: click one hole/pin, then another.',
       'Power the rails from the Arduino 5V / GND pins first.',
     ],
@@ -212,17 +212,17 @@ export const LABS: Lab[] = [
     components: ['1 × push button', '1 × 10 kΩ resistor (pull-down)', '1 × LED + 330 Ω resistor', '5 × jumper wires'],
     wiring: [
       'Power both rails from the Arduino (5V → +, GND → −).',
-      'Button straddles the centre gap around columns 5–7.',
-      'D2 → the button\'s top-side strip; 10 kΩ from that strip to the − rail (pull-down).',
-      'The button\'s bottom-side strip → + rail.',
+      'Button straddles the centre gap at columns 5 and 7 (its same-column pins are joined inside, like a real tact switch).',
+      'D2 → the button\'s LEFT column (5); 10 kΩ from that column to the − rail (pull-down).',
+      'The button\'s RIGHT column (7) → + rail.',
       'D13 → 330 Ω → LED → − rail.',
     ],
     expectation: 'Run the program. The LED follows the button: hold the button down (click-and-hold it) and the LED lights.',
     explanation:
-      'With the button up, the pull-down resistor holds D2 at 0 V → reads LOW. Pressing the button connects D2\'s strip to 5 V → reads HIGH; the 10 kΩ then just carries a harmless 0.5 mA. The program polls D2 forever and copies the state to D13. Without the pull-down, D2 would float when the button is up and read random noise — try deleting the resistor and watch the Issues panel.',
+      'With the button up, the pull-down resistor holds D2 at 0 V → reads LOW. Pressing the button connects the left column to the right column, so D2 sees 5 V → reads HIGH; the 10 kΩ then just carries a harmless 0.5 mA. The program polls D2 forever and copies the state to D13. Without the pull-down, D2 would float when the button is up and read random noise — try deleting the resistor and watch the Issues panel.',
     mistakes: [
       'No pull-down/pull-up: floating inputs read garbage.',
-      'Wiring both button pins on the same side of the gap: same-side pins are joined internally, so the button does nothing.',
+      'Wiring both connections to the same button column: those pins are joined internally, so the input reads pressed all the time.',
       'Forgetting the LED resistor.',
     ],
     limitations: ['No switch bounce is modelled — real buttons chatter for a few ms and sometimes need debouncing.'],

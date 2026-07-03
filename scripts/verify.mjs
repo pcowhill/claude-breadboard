@@ -46,11 +46,12 @@ let browser;
 try {
   await waitForServer(BASE);
 
+  // use the pre-provisioned browser when present; otherwise fall back to the
+  // Playwright-managed one (fresh machines: run `npx playwright install chromium`)
   const exeCandidates = ['/opt/pw-browsers/chromium'];
   let executablePath;
   for (const c of exeCandidates) {
     if (existsSync(c)) {
-      // could be a dir wrapper; playwright default resolution usually works, keep undefined then
       const st = statSync(c);
       if (st.isFile()) executablePath = c;
     }

@@ -51,7 +51,30 @@ export class Interaction {
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     canvas.addEventListener('pointerup', (e) => this.onUp(e));
-    canvas.addEventListener('pointerleave', () => this.delegate.hover(null));
+    canvas.addEventListener('pointerleave', () => {
+      this.delegate.hover(null);
+      this.view.setHoverSnap(null);
+    });
+    // interrupted gestures (system gestures, tab switch, capture loss) must
+    // not leave a button held or the camera controls disabled
+    const abort = () => this.abortGesture();
+    canvas.addEventListener('pointercancel', abort);
+    canvas.addEventListener('lostpointercapture', abort);
+    window.addEventListener('blur', abort);
+  }
+
+  private abortGesture() {
+    if (this.pressingButton) {
+      this.circuit.setProp(this.pressingButton, 'pressed', false);
+      this.pressingButton = null;
+    }
+    if (this.dragging) {
+      this.dragging = null;
+      this.view.clearGhost();
+    }
+    this.downPos = null;
+    this.downObject = null;
+    this.view.ctx.controls.enabled = true;
   }
 
   setMode(mode: Mode) {
@@ -62,6 +85,8 @@ export class Interaction {
   }
 
   cancel() {
+    this.view.clearWirePreview();
+    this.view.clearGhost();
     if (this.mode.kind === 'wire' && this.mode.from) {
       this.setMode({ kind: 'wire', from: null, color: this.wireColor });
       return;
@@ -154,6 +179,7 @@ export class Interaction {
   }
 
   private onUp(e: PointerEvent) {
+    if (e.button !== 0) return; // right/middle releases are camera gestures
     const wasDown = this.downPos;
     this.downPos = null;
     const moved = wasDown ? Math.hypot(e.clientX - wasDown.x, e.clientY - wasDown.y) : 0;
@@ -170,9 +196,9 @@ export class Interaction {
       return;
     }
 
-    // begin drag instead of click? — drags start in onMove; if we reach here
-    // with large movement in select mode, it was a camera move.
-    if (moved > CLICK_DIST) {
+    // only a left press that started on the canvas counts as a click; drags
+    // start in onMove, so large movement here was a camera move.
+    if (!wasDown || moved > CLICK_DIST) {
       this.downObject = null;
       return;
     }
@@ -350,6 +376,11 @@ export class Interaction {
         ok = false;
       }
       target[pin] = id;
+    }
+    // a two-pin part must not end up with both legs in one connected strip
+    if (ok && def.placement === 'two-pin') {
+      const ids = Object.values(target);
+      if (ids.length === 2 && snaps.netKeyOf(ids[0]) === snaps.netKeyOf(ids[1])) ok = false;
     }
     const ghostPts = Object.values(target)
       .filter((id) => snaps.has(id))

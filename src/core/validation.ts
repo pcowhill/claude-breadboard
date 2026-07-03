@@ -147,6 +147,17 @@ export function validate(circuit: Circuit, sim: Simulation, programPins: { digit
   }
 
   for (const comp of circuit.components.values()) {
+    for (const [pinName, snapId] of Object.entries(comp.pins)) {
+      if (snaps.netKeyOf(snapId).startsWith('inert.')) {
+        issues.push({
+          code: 'inert-pin',
+          severity: 'info',
+          title: `Component leg on unsimulated pin (${snaps.get(snapId).label})`,
+          detail: `The ${pinName} leg sits in a socket the simulation does not model (see the Simulation Model panel) — it will behave as unconnected.`,
+          subjects: [comp.id],
+        });
+      }
+    }
     if ((IC_TYPES as readonly string[]).includes(comp.type)) {
       const vcc = sim.readingOfSnap(comp.pins.VCC);
       const gnd = sim.readingOfSnap(comp.pins.GND);

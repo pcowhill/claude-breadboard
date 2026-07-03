@@ -271,6 +271,12 @@ export const TOOLBOX = {
       categorystyle: 'debug_category',
       contents: [
         { kind: 'block', type: 'debug_print', inputs: { VALUE: num(0) } },
+        {
+          kind: 'block',
+          type: 'debug_print',
+          inputs: { VALUE: { shadow: { type: 'text', fields: { TEXT: 'hello' } } } },
+        },
+        { kind: 'block', type: 'text' },
         { kind: 'block', type: 'debug_highlight' },
         { kind: 'block', type: 'debug_probe_label' },
       ],
