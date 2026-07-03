@@ -240,6 +240,14 @@ export class View {
   resize() {
     this.ctx.resize();
   }
+
+  /** Project a snap point to canvas client coordinates (for tests/tools). */
+  screenPosOfSnap(snapId: string, canvas: HTMLCanvasElement): { x: number; y: number } {
+    const p = snaps.get(snapId).pos;
+    const v = new THREE.Vector3(p.x, p.y, p.z).project(this.ctx.camera);
+    const r = canvas.getBoundingClientRect();
+    return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+  }
 }
 
 function ring(color: string, radius: number, tube: number): THREE.Mesh {

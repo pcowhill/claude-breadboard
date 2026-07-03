@@ -669,4 +669,6 @@ window.__lab = {
     app.setTab('tools');
   },
   snapIds: () => snaps.all.map((s) => s.id),
+  screenPosOfSnap: (snapId: string) => app.view.screenPosOfSnap(snapId, app.ui.canvas),
+  wires: () => [...app.circuit.wires.values()],
 };
